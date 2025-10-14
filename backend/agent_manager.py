@@ -1,87 +1,116 @@
-# backend/agent_manager.py
 import os
-import time
-from typing import Optional, Tuple
+from typing import Optional
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
-from azure.ai.agents.models import FunctionTool, ToolSet
-from .tools import get_company_details
+from tools import get_company_details
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 class AzureAIAgentManager:
     def __init__(self):
+        # Initialize project client
         self.project_client = self._setup_project_client()
-        self.model_deployment_name = os.getenv("MODEL_DEPLOYMENT_NAME")
-        self.agent_toolset = self._setup_toolset()
-        self.project_client.agents.enable_auto_function_calls(self.agent_toolset)
+        self.agent_id = os.getenv("AGENT_ID")
+        
+        # Enable automatic function calling
+        self.project_client.agents.enable_auto_function_calls({get_company_details})
 
     def _setup_project_client(self):
+        """Setup Azure AI Project Client"""
         endpoint = os.getenv("PROJECT_ENDPOINT")
-        if not endpoint:
-            raise ValueError("PROJECT_ENDPOINT missing in .env")
+        subscription_id = os.getenv("AZURE_SUBSCRIPTION_ID")
+        resource_group_name = os.getenv("AZURE_RESOURCE_GROUP")
+        project_name = os.getenv("AZURE_PROJECT_NAME")
+
+        if not all([endpoint, subscription_id, resource_group_name, project_name]):
+            raise ValueError("Missing required Azure environment variables.")
+
         return AIProjectClient(
             endpoint=endpoint,
-            credential=DefaultAzureCredential()
+            credential=DefaultAzureCredential(),
+            subscription_id=subscription_id,
+            resource_group_name=resource_group_name,
+            project_name=project_name,
         )
 
-    def _setup_toolset(self):
-        user_functions = {get_company_details}
-        functions = FunctionTool(user_functions)
-        toolset = ToolSet()
-        toolset.add(functions)
-        return toolset
-
-    def get_or_create_agent(self, agent_id: Optional[str] = None):
-        if agent_id:
-            return self.project_client.agents.get_agent(agent_id)
-        # Create new
-        agent = self.project_client.agents.create_agent(
-            model=self.model_deployment_name,
-            name="company-info-web-agent",
-            instructions=(
-                "You are an expert assistant that provides company information. "
-                "Answer user queries about the company's details, mission, vision, "
-                "values, contact info, and legal policies. Always provide accurate, "
-                "clear, and professional responses."
-            ),
-            description="Web-based company info assistant",
-            toolset=self.agent_toolset
-        )
-        return agent
-
-    def get_or_create_thread(self, thread_id: Optional[str] = None):
+    def send_message_and_run(self, thread_id: Optional[str], user_message: str):
+        """Send message and get agent response"""
+        
         if thread_id:
-            return self.project_client.agents.threads.get(thread_id)
-        return self.project_client.agents.threads.create()
-
-    def send_message_and_run(self, thread_id: str, agent_id: str, user_message: str):
-        # Send message
-        self.project_client.agents.messages.create(
-            thread_id=thread_id,
-            role="user",
-            content=user_message
-        )
-
-        # Run agent
-        run = self.project_client.agents.runs.create_and_process(
-            thread_id=thread_id,
-            agent_id=agent_id
-        )
-
-        # Poll until completion
-        while run.status in ["queued", "in_progress", "requires_action"]:
-            time.sleep(1)
-            run = self.project_client.agents.runs.get(thread_id=thread_id, run_id=run.id)
-            if run.status == "requires_action":
-                # Auto-handled by enable_auto_function_calls()
-                # But if needed, you can add manual handling here
-                pass
-
-        if run.status == "failed":
-            raise RuntimeError(f"Run failed: {run.last_error}")
-
-        # Get latest assistant message
-        messages = self.project_client.agents.messages.list(thread_id=thread_id)
-        assistant_msg = next((m for m in messages if m["role"] == "assistant"), None)
-        if assistant_msg and assistant_msg["content"]:
-            return assistant_msg["content"][0]["text"]["value"]
-        return "No response from agent."
+            # Use existing thread
+            try:
+                # Get the messages operations from agents
+                messages_ops = self.project_client.agents.messages
+                
+                # Create message
+                messages_ops.create(
+                    thread_id=thread_id,
+                    role="user",
+                    content=user_message,
+                )
+                
+                # Create and process run
+                runs_ops = self.project_client.agents.runs
+                run = runs_ops.create_and_process(
+                    thread_id=thread_id,
+                    assistant_id=self.agent_id,
+                )
+                
+                # Check status
+                if run.status == "failed":
+                    error_msg = getattr(run, 'last_error', 'Unknown error')
+                    raise RuntimeError(f"Run failed: {error_msg}")
+                
+                # Get messages
+                messages_list = list(messages_ops.list(thread_id=thread_id))
+                
+                # Get the latest assistant message
+                for msg in messages_list:
+                    if msg.role == "assistant" and msg.content:
+                        for content_item in msg.content:
+                            if hasattr(content_item, 'text'):
+                                return thread_id, content_item.text.value
+                
+                return thread_id, "No response from agent."
+                
+            except Exception as e:
+                # If thread doesn't exist or error, create new thread
+                print(f"Error with existing thread: {e}. Creating new thread...")
+                thread_id = None
+        
+        # Create new thread and run in one call
+        if not thread_id:
+            run = self.project_client.agents.create_thread_and_process_run(
+                agent_id=self.agent_id,
+                thread={
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": user_message,
+                        }
+                    ]
+                }
+            )
+            
+            # Check status
+            if run.status == "failed":
+                error_msg = getattr(run, 'last_error', 'Unknown error')
+                raise RuntimeError(f"Run failed: {error_msg}")
+            
+            # Get the thread_id from the run
+            thread_id = run.thread_id
+            
+            # Get messages from the new thread
+            messages_ops = self.project_client.agents.messages
+            messages_list = list(messages_ops.list(thread_id=thread_id))
+            
+            # Get the latest assistant message
+            for msg in messages_list:
+                if msg.role == "assistant" and msg.content:
+                    for content_item in msg.content:
+                        if hasattr(content_item, 'text'):
+                            return thread_id, content_item.text.value
+            
+            return thread_id, "No response from agent."

@@ -23,30 +23,17 @@ class ChatResponse(BaseModel):
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
-        # Get or create thread
-        if request.thread_id:
-            thread = agent_manager.get_or_create_thread(request.thread_id)
-        else:
-            thread = agent_manager.get_or_create_thread()
-        
-        # Get agent (you can hardcode or store agent_id in env)
-        agent_id = os.getenv("AGENT_ID")
-        agent = agent_manager.get_or_create_agent(agent_id)
-
-        # Process message
-        response_text = agent_manager.send_message_and_run(
-            thread_id=thread.id,
-            agent_id=agent["id"] if isinstance(agent, dict) else agent.id,
+        # Send message and get response (returns thread_id and response)
+        thread_id, response = agent_manager.send_message_and_run(
+            thread_id=request.thread_id,
             user_message=request.message
         )
 
-        return ChatResponse(
-            response=response_text,
-            thread_id=thread.id
-        )
-    
+        return ChatResponse(response=response, thread_id=thread_id)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/health")
 def health():
