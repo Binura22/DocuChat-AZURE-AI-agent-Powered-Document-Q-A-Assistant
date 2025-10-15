@@ -221,6 +221,4 @@ For issues related to:
 
 ---
 
-**Built with ❤️ using Azure AI Foundry**
-
 *Last Updated: October 2025*
