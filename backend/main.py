@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import uvicorn
 from typing import Optional
 import os
 from dotenv import load_dotenv
@@ -93,3 +94,14 @@ async def chat(request: ChatRequest):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ----------- MAIN ENTRY POINT -----------
+if __name__ == "__main__":
+
+    host = os.getenv("Backend_APP_HOST", "127.0.0.1")
+    port = int(os.getenv("Backend_APP_PORT", 8000))
+    reload = os.getenv("Backend_APP_RELOAD", "False").lower() == "true"
+
+    print(f"Starting FastAPI server on http://{host}:{port}")
+    uvicorn.run("main:app", host=host, port=port, reload=reload)
