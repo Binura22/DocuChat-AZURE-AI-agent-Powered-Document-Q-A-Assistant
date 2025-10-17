@@ -53,6 +53,10 @@ AZURE_Agent_project/
    AZURE_RESOURCE_GROUP=your-resource-group
    AZURE_PROJECT_NAME=your-project-name
    AGENT_ID=your-agent-id
+
+   Backend_APP_HOST=127.0.0.1
+   Backend_APP_PORT=8000
+   Backend_APP_RELOAD=True
    ```
 
    **How to get these values:**
@@ -66,7 +70,7 @@ AZURE_Agent_project/
 1. **Start the Backend Server**
    ```bash
    cd backend
-   uvicorn main:app --reload
+   python main.py
    ```
    The backend will run at: `http://localhost:8000`
 
